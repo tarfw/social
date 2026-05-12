@@ -1,24 +1,46 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+import React, { useEffect } from "react";
+import { Stack, useRouter, useSegments } from "expo-router";
+import { AuthProvider, useAuth } from "../context/auth";
+import { usePushNotifications } from "../hooks/usePushNotifications";
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+function InitialLayout() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
 
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+  useEffect(() => {
+    if (isLoading) return;
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
+    const inAuthGroup = segments[0] === "(tabs)";
+
+    if (!isAuthenticated && segments[0] !== "login") {
+      // Redirect to login if not authenticated and not on login screen
+      router.replace("/login");
+    } else if (isAuthenticated && segments[0] === "login") {
+      // Redirect to tabs if authenticated and on login screen
+      router.replace("/(tabs)");
+    }
+  }, [isAuthenticated, isLoading, segments]);
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="write" options={{ presentation: 'modal', title: 'Compose' }} />
+      <Stack.Screen name="view_thread" options={{ presentation: 'card', title: 'Thread' }} />
+      <Stack.Screen name="profile_detail" options={{ presentation: 'card', title: 'Profile' }} />
+      <Stack.Screen name="following" options={{ presentation: 'card', title: 'Follow' }} />
+      <Stack.Screen name="edit_profile" options={{ presentation: 'modal', title: 'Edit Profile' }} />
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
+  // Initialize push notifications
+  usePushNotifications();
+
+  return (
+    <AuthProvider>
+      <InitialLayout />
+    </AuthProvider>
   );
 }

@@ -1,98 +1,368 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  StyleSheet,
+  View,
+  FlatList,
+  ActivityIndicator,
+  RefreshControl,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  Alert,
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth } from '../../context/auth';
+import PostCard from '../../components/PostCard';
+import { Plus, Bell, Search, Asterisk } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import { THEME } from '../../constants/theme';
+import {
+  COMMUNITY_LABELS,
+  ALL_FILTER,
+  type FeedFilter,
+  getCommunityLabels,
+} from '../../constants/labels';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+// Removed static FILTERS constant to handle dynamic rearrangement
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const { agent } = useAuth();
+  const router = useRouter();
+  const [allPosts, setAllPosts] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<FeedFilter>(ALL_FILTER);
+  const insets = useSafeAreaInsets();
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const [defaultFilter, setDefaultFilter] = useState<FeedFilter>(ALL_FILTER);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  // Derive dynamic filters list based on default selection
+  const dynamicFilters = React.useMemo(() => {
+    const base = [
+      { key: ALL_FILTER, label: 'All' },
+      ...COMMUNITY_LABELS.map(l => ({ key: l.val as FeedFilter, label: l.display })),
+    ];
+    // Put default filter at the first position
+    return [...base].sort((a, b) => {
+      if (a.key === defaultFilter) return -1;
+      if (b.key === defaultFilter) return 1;
+      return 0;
+    });
+  }, [defaultFilter]);
+
+  // Load default filter
+  useEffect(() => {
+    AsyncStorage.getItem('default_feed').then(val => {
+      if (val) {
+        setDefaultFilter(val as FeedFilter);
+        setActiveFilter(val as FeedFilter);
+      }
+    });
+  }, []);
+
+  const saveDefaultFilter = async (filter: FeedFilter) => {
+    try {
+      await AsyncStorage.setItem('default_feed', filter);
+      setDefaultFilter(filter);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchTimeline = useCallback(async (refresh = false) => {
+    if (!agent) return;
+    try {
+      if (!refresh) setIsLoading(true);
+      
+      let posts: any[] = [];
+      let nextCursor: string | undefined = undefined;
+
+      if (activeFilter === ALL_FILTER) {
+        // Mode 1: Follows-based Timeline
+        const response = await agent.getTimeline({ limit: 40 });
+        posts = response.data.feed;
+        nextCursor = response.data.cursor;
+      } else {
+        // Mode 2: Universal Global Search for Community Labels
+        const response = await agent.app.bsky.feed.searchPosts({ 
+          q: activeFilter, 
+          limit: 40 
+        });
+        // Map search result (PostView) to look like timeline result (FeedViewPost)
+        posts = response.data.posts.map(post => ({ post }));
+        nextCursor = response.data.cursor;
+      }
+
+      setAllPosts(posts);
+      setCursor(nextCursor);
+    } catch (e) {
+      console.error('Failed to fetch feed', e);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [agent, activeFilter]);
+
+  const fetchMore = async () => {
+    if (!agent || !cursor || isFetchingMore) return;
+    try {
+      setIsFetchingMore(true);
+      let posts: any[] = [];
+      let nextCursor: string | undefined = undefined;
+
+      if (activeFilter === ALL_FILTER) {
+        const res = await agent.getTimeline({ limit: 40, cursor });
+        posts = res.data.feed;
+        nextCursor = res.data.cursor;
+      } else {
+        const res = await agent.app.bsky.feed.searchPosts({ 
+          q: activeFilter, 
+          limit: 40, 
+          cursor 
+        });
+        posts = res.data.posts.map(post => ({ post }));
+        nextCursor = res.data.cursor;
+      }
+
+      setAllPosts(prev => [...prev, ...posts]);
+      setCursor(nextCursor);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsFetchingMore(false);
+    }
+  };
+
+  useEffect(() => { fetchTimeline(); }, [fetchTimeline]);
+
+  const onRefresh = () => {
+    setIsRefreshing(true);
+    fetchTimeline(true);
+  };
+
+  // Client-side filtering is no longer needed as we fetch specific content from the server
+  const filteredPosts = allPosts;
+
+  if (isLoading && allPosts.length === 0) {
+    return (
+      <View style={[styles.loadingContainer, { paddingTop: insets.top }]}>
+        <ActivityIndicator size="large" color={THEME.primary} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      {/* Compact Top Bar: Brand + Filters + Icons */}
+      <View style={[styles.mergedHeader, { paddingTop: insets.top + 8 }]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterScroll}
+          style={styles.flexShrink}
+        >
+          {/* Brand Logo in Filter Bar */}
+          <View style={styles.brandChip}>
+            <Asterisk size={18} color={THEME.white} strokeWidth={3} />
+          </View>
+
+          {dynamicFilters.map(f => {
+            const isActive = activeFilter === f.key;
+            const isDefault = defaultFilter === f.key;
+            const labelDef = COMMUNITY_LABELS.find(l => l.val === f.key);
+            
+            // Design: Minimalist & Dynamic
+            const activeColor = labelDef?.color ?? THEME.primary;
+            const activeBg   = labelDef?.bg   ?? '#F8FAFC'; // Very light grey for "All"
+            
+            return (
+              <TouchableOpacity
+                key={f.key}
+                style={[
+                  styles.filterChip,
+                  isActive && {
+                    backgroundColor: activeBg,
+                    borderWidth: 0, // No border for active
+                  },
+                  !isActive && {
+                    backgroundColor: 'transparent',
+                    borderWidth: 0,
+                  }
+                ]}
+                onPress={() => setActiveFilter(f.key)}
+                onLongPress={() => saveDefaultFilter(f.key)}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    isActive && { color: activeColor, fontWeight: '800' },
+                    !isActive && { color: '#8E8E93', fontWeight: '500' }
+                  ]}
+                >
+                  {f.label}
+                </Text>
+                {isDefault && (
+                  <View style={[styles.defaultIndicator, { backgroundColor: activeColor }]} />
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+
+      <FlatList
+        data={filteredPosts}
+        renderItem={({ item }) => (
+          <PostCard
+            post={item.post}
+            hideCommunityLabels={activeFilter !== ALL_FILTER}
+          />
+        )}
+        keyExtractor={(item, index) => `${item.post?.uri ?? index}-${index}`}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={THEME.primary} />
+        }
+        onEndReached={fetchMore}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={isFetchingMore ? <ActivityIndicator style={{ padding: 20 }} /> : null}
+        contentContainerStyle={{
+          paddingBottom: insets.bottom + 56 + 80,
+          flexGrow: 1,
+        }}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No posts yet</Text>
+            <Text style={styles.emptySubtitle}>
+              {activeFilter === ALL_FILTER
+                ? 'Your timeline is empty.'
+                : `No posts labelled "${dynamicFilters.find(f => f.key === activeFilter)?.label}" yet.`}
+            </Text>
+          </View>
+        }
+      />
+
+      {/* FAB */}
+      <TouchableOpacity
+        style={[styles.fab, { bottom: 16, backgroundColor: THEME.primary, shadowColor: THEME.primary }]}
+        onPress={() => router.push('/write')}
+        activeOpacity={0.85}
+      >
+        <Plus size={28} color="white" />
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
+  container: { flex: 1, backgroundColor: 'white' },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'white',
+  },
+
+  // Header
+  mergedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F3F5',
+    backgroundColor: 'white',
+  },
+  flexShrink: { flex: 1 },
+  brandChip: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: THEME.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 4,
+  },
+  headerTitle: { fontSize: 24, fontWeight: '800', color: '#14171A' },
+  compactBrand: { fontSize: 18, fontWeight: '900', color: THEME.primary, marginLeft: 6 },
+  headerIcons: { flexDirection: 'row', alignItems: 'center', paddingLeft: 8 },
+  iconButton: { padding: 4 },
+
+  // Filter bar
+  filterBar: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F3F5',
+    backgroundColor: 'white',
+  },
+  filterScroll: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     gap: 8,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    gap: 4,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
+  filterChipText: {
+    fontSize: 15,
+    letterSpacing: -0.2,
+  },
+  defaultIndicator: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    marginLeft: 2,
+    opacity: 0.8,
+  },
+  filterCount: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginLeft: 2,
+  },
+
+  // Empty state
+  emptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 80,
+    paddingHorizontal: 32,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#14171A',
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#657786',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
+  // FAB
+  fab: {
     position: 'absolute',
+    right: 20,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#0085FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#0085FF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
   },
 });
