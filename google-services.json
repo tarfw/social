@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "113051120480",
+    "project_id": "social-98eda",
+    "storage_bucket": "social-98eda.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:113051120480:android:9be8a0a94dad69ffb16405",
+        "android_client_info": {
+          "package_name": "com.thamizhtar.social"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDQ0zlXWaaHlcvJB3Ihas2t7HhmU6_B8OY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

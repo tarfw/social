@@ -18,7 +18,8 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.thamizhtar.social"
+      "package": "com.thamizhtar.social",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
