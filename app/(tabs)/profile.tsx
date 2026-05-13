@@ -8,7 +8,7 @@ import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   LogOut, Settings, MapPin, Link as LinkIcon,
-  Calendar, Share2, X, Shield, VolumeX, User,
+  Calendar, Share2, X, Shield, VolumeX, User, Info, FileText
 } from 'lucide-react-native';
 import { useAuth } from '../../context/auth';
 import PostCard from '../../components/PostCard';
@@ -158,6 +158,16 @@ function SettingsModal({
       icon: <VolumeX size={20} color="#6B7280" />,
       label: 'Muted accounts',
       onPress: () => {},
+    },
+    {
+      icon: <Shield size={20} color="#6B7280" />,
+      label: 'Privacy Policy',
+      onPress: () => Linking.openURL('https://bsky.app/about/privacy'),
+    },
+    {
+      icon: <FileText size={20} color="#6B7280" />,
+      label: 'Terms of Service',
+      onPress: () => Linking.openURL('https://bsky.app/about/tos'),
     },
     {
       icon: <LogOut size={20} color="#DC2626" />,

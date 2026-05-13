@@ -8,6 +8,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search as SearchIcon, X, UserPlus, UserCheck } from 'lucide-react-native';
 import { useAuth } from '../../context/auth';
 import { useRouter } from 'expo-router';
+import PostCard from '../../components/PostCard';
+import { THEME } from '../../constants/theme';
 
 type Actor = {
   did: string;
@@ -26,9 +28,10 @@ export default function SearchScreen() {
   const router = useRouter();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Actor[]>([]);
+  const [postResults, setPostResults] = useState<any[]>([]);
   const [suggestions, setSuggestions] = useState<Actor[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [followingMap, setFollowingMap] = useState<Record<string, string>>({});
+  const [searchMode, setSearchMode] = useState<'people' | 'posts'>('people');
 
   // Load suggested follows on mount
   useEffect(() => {
@@ -39,17 +42,26 @@ export default function SearchScreen() {
   }, [agent]);
 
   const doSearch = useCallback(async (q: string) => {
-    if (!agent || !q.trim()) { setResults([]); return; }
+    if (!agent || !q.trim()) { 
+      setResults([]); 
+      setPostResults([]);
+      return; 
+    }
     try {
       setIsSearching(true);
-      const r = await agent.searchActors({ q: q.trim(), limit: 25 });
-      setResults(r.data.actors as Actor[]);
+      if (searchMode === 'people') {
+        const r = await agent.searchActors({ q: q.trim(), limit: 25 });
+        setResults(r.data.actors as Actor[]);
+      } else {
+        const r = await agent.app.bsky.feed.searchPosts({ q: q.trim(), limit: 25 });
+        setPostResults(r.data.posts.map(post => ({ post })));
+      }
     } catch (e) {
       console.error(e);
     } finally {
       setIsSearching(false);
     }
-  }, [agent]);
+  }, [agent, searchMode]);
 
   useEffect(() => {
     const t = setTimeout(() => doSearch(query), 400);
@@ -75,13 +87,21 @@ export default function SearchScreen() {
     } catch (e) { console.error(e); }
   };
 
-  const displayList = query.trim() ? results : suggestions;
-  const sectionTitle = query.trim() ? `Results for "${query}"` : 'Suggested accounts';
+  const displayList = searchMode === 'people' 
+    ? (query.trim() ? results : suggestions)
+    : postResults;
+  const sectionTitle = query.trim() 
+    ? `Results for "${query}"` 
+    : (searchMode === 'people' ? 'Suggested accounts' : '');
 
   const renderActor = ({ item }: { item: Actor }) => {
     const isFollowing = !!item.viewer?.following;
     return (
-      <TouchableOpacity style={styles.actorRow} activeOpacity={0.7}>
+      <TouchableOpacity 
+        style={styles.actorRow} 
+        activeOpacity={0.7}
+        onPress={() => router.push({ pathname: '/profile_detail', params: { did: item.did } })}
+      >
         <Image source={{ uri: item.avatar }} style={styles.actorAvatar} contentFit="cover" transition={200} />
         <View style={styles.actorInfo}>
           <Text style={styles.actorName} numberOfLines={1}>{item.displayName || item.handle}</Text>
@@ -108,24 +128,44 @@ export default function SearchScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Search bar */}
-      <View style={styles.searchBar}>
-        <SearchIcon size={18} color="#657786" style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search people…"
-          placeholderTextColor="#AAB8C2"
-          value={query}
-          onChangeText={setQuery}
-          returnKeyType="search"
-          autoCorrect={false}
-          autoCapitalize="none"
-        />
-        {query.length > 0 && (
-          <TouchableOpacity onPress={() => { setQuery(''); setResults([]); Keyboard.dismiss(); }}>
-            <X size={17} color="#657786" />
+      <View style={styles.header}>
+        {/* Search bar */}
+        <View style={styles.searchBar}>
+          <SearchIcon size={18} color="#8E8E93" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder={searchMode === 'people' ? "Search people" : "Search posts"}
+            placeholderTextColor="#AAB8C2"
+            value={query}
+            onChangeText={setQuery}
+            returnKeyType="search"
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+          {query.length > 0 && (
+            <TouchableOpacity onPress={() => { setQuery(''); setResults([]); setPostResults([]); Keyboard.dismiss(); }}>
+              <X size={18} color="#657786" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Mode toggle - Twitter Android style tabs */}
+        <View style={styles.tabBar}>
+          <TouchableOpacity 
+            style={[styles.tabItem, searchMode === 'people' && styles.tabItemActive]}
+            onPress={() => setSearchMode('people')}
+          >
+            <Text style={[styles.tabText, searchMode === 'people' && styles.tabTextActive]}>People</Text>
+            {searchMode === 'people' && <View style={styles.tabIndicator} />}
           </TouchableOpacity>
-        )}
+          <TouchableOpacity 
+            style={[styles.tabItem, searchMode === 'posts' && styles.tabItemActive]}
+            onPress={() => setSearchMode('posts')}
+          >
+            <Text style={[styles.tabText, searchMode === 'posts' && styles.tabTextActive]}>Posts</Text>
+            {searchMode === 'posts' && <View style={styles.tabIndicator} />}
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Results */}
@@ -136,8 +176,12 @@ export default function SearchScreen() {
       ) : (
         <FlatList
           data={displayList}
-          keyExtractor={i => i.did}
-          renderItem={renderActor}
+          keyExtractor={(i, idx) => (i.did || i.post?.uri || idx.toString())}
+          renderItem={({ item }) => (
+            searchMode === 'people' 
+              ? renderActor({ item: item as Actor }) 
+              : <PostCard post={item.post} />
+          )}
           ListHeaderComponent={
             displayList.length > 0 ? (
               <Text style={styles.sectionTitle}>{sectionTitle}</Text>
@@ -160,19 +204,57 @@ export default function SearchScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 60 },
+  emptyText: { fontSize: 15, color: '#657786' },
+  header: {
+    backgroundColor: 'white',
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F3F5',
+  },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: 16,
-    marginVertical: 12,
+    marginTop: 8,
+    marginBottom: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: '#F0F3F5',
-    borderRadius: 24,
-    gap: 8,
+    backgroundColor: '#F1F3F4',
+    borderRadius: 12,
+    gap: 10,
   },
-  searchIcon: {},
-  searchInput: { flex: 1, fontSize: 15, color: '#14171A' },
+  searchInput: { flex: 1, fontSize: 16, color: '#14171A' },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: 'white',
+  },
+  tabItem: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  tabItemActive: {
+    // No background for active tab in Twitter style
+  },
+  tabText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#657786',
+  },
+  tabTextActive: {
+    color: '#14171A',
+    fontWeight: '700',
+  },
+  tabIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    width: 60,
+    height: 4,
+    backgroundColor: THEME.primary,
+    borderRadius: 2,
+  },
   sectionTitle: {
     fontSize: 12,
     fontWeight: '700',
@@ -217,6 +299,4 @@ const styles = StyleSheet.create({
   },
   followBtnText: { fontSize: 13, fontWeight: '700', color: 'white' },
   followingBtnText: { color: '#0085FF' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 60 },
-  emptyText: { fontSize: 15, color: '#657786' },
 });

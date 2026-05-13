@@ -13,6 +13,7 @@ import { X, ImageIcon, Tag } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { COMMUNITY_LABELS, type CommunityLabelVal } from '../constants/labels';
 import { THEME } from '../constants/theme';
+import { useProfileCache } from '../hooks/useProfileCache';
 
 export default function ComposeScreen() {
   const [text, setText] = useState('');
@@ -162,116 +163,118 @@ export default function ComposeScreen() {
   const isOverLimit = remaining < 0;
   const canPost = (text.trim().length > 0 || images.length > 0) && !isPosting && !isOverLimit;
 
+  const { profile } = useProfileCache(agent, agent?.session?.did ?? '');
+
   return (
-    <View style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+        style={styles.flex}
+      >
         {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-          <TouchableOpacity onPress={() => router.back()} hitSlop={12} accessibilityLabel="Close">
-            <X size={26} color="#14171A" />
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} hitSlop={20} style={styles.headerBtn}>
+            <Text style={styles.cancelText}>Cancel</Text>
           </TouchableOpacity>
-          <View style={styles.headerCenter}>
-            {isReply && (
-              <Text style={styles.replyingTo}>Replying to @{params.replyAuthorHandle}</Text>
-            )}
-            {isQuote && <Text style={styles.replyingTo}>Quoting post</Text>}
-          </View>
           <TouchableOpacity
             style={[styles.postButton, !canPost && styles.postButtonDisabled]}
             onPress={handlePost}
             disabled={!canPost}
-            accessibilityLabel="Post"
           >
-            {isPosting
-              ? <ActivityIndicator color="white" size="small" />
-              : <Text style={styles.postButtonText}>Post</Text>
-            }
+            {isPosting ? (
+              <ActivityIndicator color="white" size="small" />
+            ) : (
+              <Text style={styles.postButtonText}>Post</Text>
+            )}
           </TouchableOpacity>
         </View>
 
+        {/* Content */}
         <ScrollView style={styles.flex} keyboardShouldPersistTaps="handled">
-          {/* Text input */}
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder={isReply ? 'Write your reply…' : "What's happening?"}
-              placeholderTextColor="#AAB8C2"
-              multiline
-              autoFocus
-              value={text}
-              onChangeText={setText}
-            />
-          </View>
+          <View style={styles.composerContent}>
+            <View style={styles.mainRow}>
+              <View style={styles.avatarCol}>
+                <Image source={{ uri: profile?.avatar }} style={styles.avatar} contentFit="cover" />
+                <View style={styles.threadLine} />
+              </View>
 
-          {/* Image previews */}
-          {images.length > 0 && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.imagePreviews}>
-              {images.map((img, i) => (
-                <View key={i} style={styles.imagePreviewWrap}>
-                  <Image source={{ uri: img.uri }} style={styles.imagePreview} contentFit="cover" />
-                  <TouchableOpacity
-                    style={styles.imageRemoveBtn}
-                    onPress={() => setImages(p => p.filter((_, j) => j !== i))}
-                    accessibilityLabel="Remove image"
-                  >
-                    <X size={14} color="white" />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
-          )}
+              <View style={styles.bodyCol}>
+                {(isReply || isQuote) && (
+                  <Text style={styles.replyingTo}>
+                    {isReply ? `Replying to @${params.replyAuthorHandle}` : 'Quoting post'}
+                  </Text>
+                )}
+                <TextInput
+                  style={styles.input}
+                  placeholder={isReply ? 'Post your reply' : "What's happening?"}
+                  placeholderTextColor="#536471"
+                  multiline
+                  autoFocus
+                  value={text}
+                  onChangeText={setText}
+                  scrollEnabled={false}
+                />
 
-          {/* Label picker */}
-          <View style={styles.labelSection}>
-            <View style={styles.labelHeader}>
-              <Tag size={15} color="#657786" />
-              <Text style={styles.labelHeaderText}>Community label</Text>
+                {images.length > 0 && (
+                  <View style={styles.imageContainer}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.imagePreviews}>
+                      {images.map((img, i) => (
+                        <View key={i} style={styles.imagePreviewWrap}>
+                          <Image source={{ uri: img.uri }} style={styles.imagePreview} contentFit="cover" />
+                          <TouchableOpacity style={styles.imageRemoveBtn} onPress={() => setImages(p => p.filter((_, j) => j !== i))}>
+                            <X size={14} color="white" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
             </View>
-            <View style={styles.labelRow}>
+          </View>
+        </ScrollView>
+
+        {/* Sticky Native Bottom Deck */}
+        <View style={styles.stickyFooter}>
+          <View style={styles.communityBar}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.communityScroll}>
               <TouchableOpacity
-                style={[styles.labelChip, selectedLabel === null && styles.labelChipNoneSelected]}
+                style={[styles.labelChip, selectedLabel === null && styles.labelChipActive]}
                 onPress={() => setSelectedLabel(null)}
               >
-                <Text style={[styles.labelChipText, selectedLabel === null && styles.labelChipTextSelected]}>
-                  None
-                </Text>
+                <Tag size={14} color={selectedLabel === null ? THEME.primary : '#536471'} />
+                <Text style={[styles.labelChipText, selectedLabel === null && styles.labelChipTextActive]}>Public</Text>
               </TouchableOpacity>
               {COMMUNITY_LABELS.map(label => {
                 const isActive = selectedLabel === label.val;
                 return (
                   <TouchableOpacity
                     key={label.val}
-                    style={[styles.labelChip, isActive && { backgroundColor: label.bg, borderColor: label.color }]}
+                    style={[styles.labelChip, isActive && styles.labelChipActive]}
                     onPress={() => setSelectedLabel(isActive ? null : label.val as CommunityLabelVal)}
                   >
-                    {isActive && <View style={[styles.labelDot, { backgroundColor: label.color }]} />}
-                    <Text style={[styles.labelChipText, isActive && { color: label.color, fontWeight: '700' }]}>
+                    <Text style={[styles.labelChipText, isActive && styles.labelChipTextActive]}>
                       {label.display}
                     </Text>
                   </TouchableOpacity>
                 );
               })}
-            </View>
+            </ScrollView>
           </View>
-        </ScrollView>
 
-        {/* Footer */}
-        <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
-          <TouchableOpacity
-            style={styles.footerIcon}
-            onPress={pickImage}
-            disabled={images.length >= 4}
-            accessibilityLabel="Attach image"
-          >
-            <ImageIcon size={22} color={images.length >= 4 ? '#AAB8C2' : THEME.primary} />
-          </TouchableOpacity>
-          <View style={styles.charRow}>
-            {remaining <= 50 && (
-              <Text style={[styles.charCount, isOverLimit && styles.charCountWarning]}>
-                {remaining}
-              </Text>
-            )}
+          <View style={styles.toolbar}>
+            <View style={styles.toolbarLeft}>
+              <TouchableOpacity style={styles.toolbarIcon} onPress={pickImage}>
+                <ImageIcon size={22} color={THEME.primary} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.toolbarRight}>
+              {charCount > 0 && (
+                <Text style={[styles.charCount, isOverLimit && styles.charCountWarning]}>
+                  {remaining}
+                </Text>
+              )}
+            </View>
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -283,55 +286,163 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: 'white' },
   flex: { flex: 1 },
   header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 16, paddingBottom: 12,
-    borderBottomWidth: 1, borderBottomColor: '#F0F3F5',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    height: 54,
+    backgroundColor: 'white',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F0F3F5',
   },
-  headerCenter: { flex: 1, alignItems: 'center' },
-  replyingTo: { fontSize: 13, color: '#657786' },
+  headerBtn: {
+    paddingVertical: 8,
+    paddingRight: 16,
+  },
+  cancelText: {
+    fontSize: 17,
+    color: '#14171A',
+    fontWeight: '400',
+  },
   postButton: {
-    backgroundColor: THEME.primary, paddingHorizontal: 22, paddingVertical: 9,
-    borderRadius: 20, minWidth: 80, alignItems: 'center',
+    backgroundColor: THEME.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
+    minWidth: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  postButtonDisabled: { opacity: 0.45 },
+  postButtonDisabled: { opacity: 0.5 },
   postButtonText: { color: 'white', fontWeight: '700', fontSize: 15 },
-  inputContainer: { paddingHorizontal: 16, paddingTop: 14, minHeight: 140 },
-  input: { fontSize: 19, lineHeight: 26, color: '#14171A', textAlignVertical: 'top' },
-  imagePreviews: { flexDirection: 'row', paddingHorizontal: 16, gap: 8, paddingBottom: 10 },
-  imagePreviewWrap: { position: 'relative', width: 90, height: 90, borderRadius: 10, overflow: 'hidden' },
-  imagePreview: { width: 90, height: 90 },
+  
+  composerContent: {
+    flex: 1,
+    paddingTop: 16,
+  },
+  mainRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+  },
+  avatarCol: {
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  avatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#F1F5F9',
+  },
+  threadLine: {
+    flex: 1,
+    width: 2,
+    backgroundColor: '#F0F3F5',
+    marginTop: 4,
+    borderRadius: 1,
+  },
+  bodyCol: {
+    flex: 1,
+  },
+  input: {
+    fontSize: 19,
+    lineHeight: 26,
+    color: '#14171A',
+    textAlignVertical: 'top',
+    paddingTop: 0, // Align with avatar top
+    minHeight: 120,
+  },
+  
+  imageContainer: {
+    marginTop: 12,
+    marginBottom: 20,
+  },
+  imagePreviews: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  imagePreviewWrap: {
+    position: 'relative',
+    width: 200,
+    height: 200,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F0F3F5',
+  },
+  imagePreview: { width: '100%', height: '100%' },
   imageRemoveBtn: {
-    position: 'absolute', top: 4, right: 4,
-    width: 22, height: 22, borderRadius: 11,
-    backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center',
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  labelSection: {
-    marginHorizontal: 16, marginTop: 16, padding: 14,
-    backgroundColor: '#F8FAFC', borderRadius: 14,
-    borderWidth: 1, borderColor: '#E8ECF0',
+
+  stickyFooter: {
+    backgroundColor: 'white',
+    borderTopWidth: 0.5,
+    borderTopColor: '#CFD9DE',
   },
-  labelHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
-  labelHeaderText: {
-    fontSize: 13, fontWeight: '600', color: '#657786',
-    textTransform: 'uppercase', letterSpacing: 0.5,
+  communityBar: {
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F0F3F5',
   },
-  labelRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  communityScroll: {
+    paddingHorizontal: 16,
+    gap: 10,
+  },
   labelChip: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 14, paddingVertical: 7,
-    borderRadius: 20, borderWidth: 1.5, borderColor: '#D9E1E8', backgroundColor: 'white', gap: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#CFD9DE',
+    gap: 6,
   },
-  labelChipNoneSelected: { borderColor: THEME.primary, backgroundColor: '#F0FDF4' },
-  labelDot: { width: 7, height: 7, borderRadius: 4 },
-  labelChipText: { fontSize: 14, color: '#657786', fontWeight: '500' },
-  labelChipTextSelected: { color: THEME.primary, fontWeight: '700' },
-  footer: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 16, paddingTop: 12,
-    borderTopWidth: 1, borderTopColor: '#F0F3F5',
+  labelChipActive: {
+    borderColor: THEME.primary,
+    backgroundColor: THEME.primary + '10',
   },
-  footerIcon: { padding: 6 },
-  charRow: { alignItems: 'center', justifyContent: 'center', minWidth: 36 },
-  charCount: { fontSize: 14, color: '#657786', fontWeight: '600' },
-  charCountWarning: { color: '#E0245E' },
+  labelChipText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#536471',
+  },
+  labelChipTextActive: {
+    color: THEME.primary,
+  },
+
+  toolbar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    height: 54,
+  },
+  toolbarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  toolbarIcon: {
+    padding: 10,
+  },
+  toolbarRight: {
+    paddingRight: 16,
+  },
+  charCount: {
+    fontSize: 13,
+    color: '#536471',
+    fontWeight: '500',
+  },
+  charCountWarning: {
+    color: '#E0245E',
+  },
 });
