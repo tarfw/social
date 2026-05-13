@@ -51,7 +51,7 @@ export default function LoginScreen() {
               style={styles.header}
             >
               <Image 
-                source={require('../assets/images/gemini_logo.png')}
+                source={require('../assets/images/logo.png')}
                 style={styles.logo}
                 contentFit="contain"
               />
