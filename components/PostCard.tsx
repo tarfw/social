@@ -163,7 +163,7 @@ function QuoteCard({ record }: { record: any }) {
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
-export default function PostCard({ post: initialPost, hideCommunityLabels = false, onOpenThread }: PostCardProps) {
+export default React.memo(function PostCard({ post: initialPost, hideCommunityLabels = false, onOpenThread }: PostCardProps) {
   const router = useRouter();
   const { agent } = useAuth();
   const { post, toggleLike, toggleRepost } = usePostActions(agent, initialPost);
@@ -307,7 +307,7 @@ export default function PostCard({ post: initialPost, hideCommunityLabels = fals
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 

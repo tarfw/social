@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet, View, Text, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, ActivityIndicator,
@@ -29,10 +29,21 @@ export default function ComposeScreen() {
     replyAuthorHandle?: string;
     quoteUri?: string;
     quoteCid?: string;
+    initialCommunity?: string;
   }>();
 
   const isReply = !!params.replyUri;
   const isQuote = !!params.quoteUri;
+
+  // Handle contextual community label pre-selection
+  useEffect(() => {
+    if (params.initialCommunity) {
+      const label = COMMUNITY_LABELS.find(l => l.val === params.initialCommunity);
+      if (label) {
+        setSelectedLabel(label.val as CommunityLabelVal);
+      }
+    }
+  }, [params.initialCommunity]);
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();

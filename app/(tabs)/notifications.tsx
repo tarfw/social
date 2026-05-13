@@ -7,14 +7,17 @@ import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Heart, Repeat2, MessageCircle, UserPlus, AtSign } from 'lucide-react-native';
 import { formatDistanceToNow } from 'date-fns';
+import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/auth';
+import { THEME } from '../../constants/theme';
 
 type NotifReason = 'like' | 'repost' | 'follow' | 'mention' | 'reply' | 'quote';
 
 type Notif = {
   uri: string;
-  author: { handle: string; displayName?: string; avatar?: string };
+  author: { did: string; handle: string; displayName?: string; avatar?: string };
   reason: NotifReason;
+  reasonSubject?: string;
   record: any;
   isRead: boolean;
   indexedAt: string;
@@ -32,12 +35,24 @@ const REASON_META: Record<NotifReason, { icon: (c: string) => JSX.Element; color
 export default function NotificationsScreen() {
   const insets = useSafeAreaInsets();
   const { agent } = useAuth();
+  const router = useRouter();
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
+
+  const handleNotifPress = (item: Notif) => {
+    if (item.reason === 'follow') {
+      router.push({ pathname: '/profile_detail', params: { did: item.author.did } });
+    } else {
+      const threadUri = item.reasonSubject || item.uri;
+      if (threadUri) {
+        router.push({ pathname: '/view_thread', params: { uri: threadUri } });
+      }
+    }
+  };
 
   const fetchNotifs = useCallback(async (refresh = false) => {
     if (!agent) return;
@@ -84,13 +99,19 @@ export default function NotificationsScreen() {
     const date = new Date(item.indexedAt);
     const text: string = item.record?.text ?? '';
     return (
-      <View style={[styles.notifRow, !item.isRead && styles.unread]}>
+      <TouchableOpacity
+        style={[styles.notifRow, !item.isRead && styles.unread]}
+        onPress={() => handleNotifPress(item)}
+        activeOpacity={0.7}
+      >
         <View style={[styles.iconWrap, { backgroundColor: meta.color + '18' }]}>
           {meta.icon(meta.color)}
         </View>
         <View style={styles.notifBody}>
           <View style={styles.notifTop}>
-            <Image source={{ uri: item.author.avatar }} style={styles.avatar} contentFit="cover" transition={200} />
+            <TouchableOpacity onPress={() => router.push({ pathname: '/profile_detail', params: { did: item.author.did } })}>
+              <Image source={{ uri: item.author.avatar }} style={styles.avatar} contentFit="cover" transition={200} />
+            </TouchableOpacity>
             <View style={styles.notifText}>
               <Text style={styles.notifAuthor} numberOfLines={1}>
                 <Text style={styles.bold}>{item.author.displayName || item.author.handle}</Text>
@@ -101,13 +122,15 @@ export default function NotificationsScreen() {
           </View>
           {text ? <Text style={styles.notifPreview} numberOfLines={2}>{text}</Text> : null}
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Title-less design */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Notifications</Text>
+      </View>
       <FlatList
         data={notifs}
         keyExtractor={i => i.uri}

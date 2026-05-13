@@ -8,15 +8,16 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  Alert,
+  Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/auth';
 import PostCard from '../../components/PostCard';
-import { Plus, Bell, Search, Asterisk } from 'lucide-react-native';
+import { Plus, Bell, Search, Asterisk, ArrowUp } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { THEME } from '../../constants/theme';
+import { InteractionManager } from 'react-native';
 import {
   COMMUNITY_LABELS,
   ALL_FILTER,
@@ -29,14 +30,26 @@ import {
 export default function HomeScreen() {
   const { agent } = useAuth();
   const router = useRouter();
-  const [allPosts, setAllPosts] = useState<any[]>([]);
+  const [postsCache, setPostsCache] = useState<Record<string, any[]>>({});
+  const [cursorsCache, setCursorsCache] = useState<Record<string, string | undefined>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FeedFilter>(ALL_FILTER);
   const insets = useSafeAreaInsets();
-  const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
   const [defaultFilter, setDefaultFilter] = useState<FeedFilter>(ALL_FILTER);
+  const [hasNewPosts, setHasNewPosts] = useState(false);
+  const listRef = React.useRef<FlatList>(null);
+  const lastFetchedUri = React.useRef<string | null>(null);
+  const postsCacheRef = React.useRef<Record<string, any[]>>({});
+
+  const currentPosts = postsCache[activeFilter] || [];
+  const currentCursor = cursorsCache[activeFilter];
+
+  // Keep ref in sync
+  useEffect(() => {
+    postsCacheRef.current = postsCache;
+  }, [postsCache]);
 
   // Derive dynamic filters list based on default selection
   const dynamicFilters = React.useMemo(() => {
@@ -73,8 +86,11 @@ export default function HomeScreen() {
 
   const fetchTimeline = useCallback(async (refresh = false) => {
     if (!agent) return;
+    const hasCache = (postsCacheRef.current[activeFilter]?.length ?? 0) > 0;
     try {
-      if (!refresh) setIsLoading(true);
+      if (!refresh && !hasCache) {
+        setIsLoading(true);
+      }
       
       let posts: any[] = [];
       let nextCursor: string | undefined = undefined;
@@ -95,8 +111,13 @@ export default function HomeScreen() {
         nextCursor = response.data.cursor;
       }
 
-      setAllPosts(posts);
-      setCursor(nextCursor);
+      setPostsCache(prev => ({ ...prev, [activeFilter]: posts }));
+      setCursorsCache(prev => ({ ...prev, [activeFilter]: nextCursor }));
+
+      if (posts.length > 0 && activeFilter === ALL_FILTER) {
+        lastFetchedUri.current = posts[0].post?.uri;
+      }
+      setHasNewPosts(false);
     } catch (e) {
       console.error('Failed to fetch feed', e);
     } finally {
@@ -105,29 +126,51 @@ export default function HomeScreen() {
     }
   }, [agent, activeFilter]);
 
+  // Periodic check for new posts
+  useEffect(() => {
+    if (!agent || activeFilter !== ALL_FILTER) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const response = await agent.getTimeline({ limit: 1 });
+        const newestUri = response.data.feed[0]?.post?.uri;
+        if (newestUri && newestUri !== lastFetchedUri.current) {
+          setHasNewPosts(true);
+        }
+      } catch (e) {
+        // Silent fail for background check
+      }
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [agent, activeFilter]);
+
   const fetchMore = async () => {
-    if (!agent || !cursor || isFetchingMore) return;
+    if (!agent || !currentCursor || isFetchingMore) return;
     try {
       setIsFetchingMore(true);
       let posts: any[] = [];
       let nextCursor: string | undefined = undefined;
 
       if (activeFilter === ALL_FILTER) {
-        const res = await agent.getTimeline({ limit: 40, cursor });
+        const res = await agent.getTimeline({ limit: 40, cursor: currentCursor });
         posts = res.data.feed;
         nextCursor = res.data.cursor;
       } else {
         const res = await agent.app.bsky.feed.searchPosts({ 
           q: activeFilter, 
           limit: 40, 
-          cursor 
+          cursor: currentCursor 
         });
         posts = res.data.posts.map(post => ({ post }));
         nextCursor = res.data.cursor;
       }
 
-      setAllPosts(prev => [...prev, ...posts]);
-      setCursor(nextCursor);
+      setPostsCache(prev => ({
+        ...prev,
+        [activeFilter]: [...(prev[activeFilter] || []), ...posts]
+      }));
+      setCursorsCache(prev => ({ ...prev, [activeFilter]: nextCursor }));
     } catch (e) {
       console.error(e);
     } finally {
@@ -135,23 +178,38 @@ export default function HomeScreen() {
     }
   };
 
-  useEffect(() => { fetchTimeline(); }, [fetchTimeline]);
+  // Do not clear posts immediately; show cache while loading
+  useEffect(() => {
+    fetchTimeline();
+  }, [activeFilter, fetchTimeline]);
 
   const onRefresh = () => {
     setIsRefreshing(true);
     fetchTimeline(true);
   };
 
-  // Client-side filtering is no longer needed as we fetch specific content from the server
-  const filteredPosts = allPosts;
+  const renderItem = useCallback(({ item }: { item: any }) => (
+    <PostCard
+      post={item.post}
+      hideCommunityLabels={activeFilter !== ALL_FILTER}
+    />
+  ), [activeFilter]);
 
-  if (isLoading && allPosts.length === 0) {
-    return (
-      <View style={[styles.loadingContainer, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={THEME.primary} />
+  const SkeletonCard = useCallback(() => (
+    <View style={styles.skeletonContainer}>
+      <View style={styles.skeletonAvatar} />
+      <View style={styles.skeletonContent}>
+        <View style={styles.skeletonLineShort} />
+        <View style={styles.skeletonLineLong} />
+        <View style={styles.skeletonLineLong} />
       </View>
-    );
-  }
+    </View>
+  ), []);
+
+  const filteredPosts = currentPosts;
+
+  // Removed full-screen loader to keep UI responsive during tab switches
+  // Skeletons will show if the cache is empty
 
   return (
     <View style={styles.container}>
@@ -212,16 +270,32 @@ export default function HomeScreen() {
           })}
         </ScrollView>
       </View>
-
+      
+      {/* New Posts Pill */}
+      {hasNewPosts && (
+        <TouchableOpacity
+          style={[styles.newPostsPill, { top: insets.top + 60 }]}
+          onPress={() => {
+            listRef.current?.scrollToOffset({ offset: 0, animated: true });
+            InteractionManager.runAfterInteractions(() => {
+              onRefresh();
+            });
+          }}
+          activeOpacity={0.9}
+        >
+          <ArrowUp size={14} color="white" />
+          <Text style={styles.newPostsText}>New posts</Text>
+        </TouchableOpacity>
+      )}
 
       <FlatList
+        ref={listRef}
         data={filteredPosts}
-        renderItem={({ item }) => (
-          <PostCard
-            post={item.post}
-            hideCommunityLabels={activeFilter !== ALL_FILTER}
-          />
-        )}
+        renderItem={renderItem}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews={true}
         keyExtractor={(item, index) => `${item.post?.uri ?? index}-${index}`}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={THEME.primary} />
@@ -234,21 +308,30 @@ export default function HomeScreen() {
           flexGrow: 1,
         }}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>No posts yet</Text>
-            <Text style={styles.emptySubtitle}>
-              {activeFilter === ALL_FILTER
-                ? 'Your timeline is empty.'
-                : `No posts labelled "${dynamicFilters.find(f => f.key === activeFilter)?.label}" yet.`}
-            </Text>
-          </View>
+          isLoading ? (
+            <View style={{ flex: 1 }}>
+              {[1, 2, 3, 4, 5].map(i => <SkeletonCard key={i} />)}
+            </View>
+          ) : (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>No posts yet</Text>
+              <Text style={styles.emptySubtitle}>
+                {activeFilter === ALL_FILTER
+                  ? 'Your timeline is empty.'
+                  : `No posts labelled "${dynamicFilters.find(f => f.key === activeFilter)?.label}" yet.`}
+              </Text>
+            </View>
+          )
         }
       />
 
       {/* FAB */}
       <TouchableOpacity
         style={[styles.fab, { bottom: 16, backgroundColor: THEME.primary, shadowColor: THEME.primary }]}
-        onPress={() => router.push('/write')}
+        onPress={() => router.push({
+          pathname: '/write',
+          params: { initialCommunity: activeFilter !== ALL_FILTER ? activeFilter : undefined }
+        })}
         activeOpacity={0.85}
       >
         <Plus size={28} color="white" />
@@ -364,5 +447,53 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 10,
     elevation: 8,
+  },
+  newPostsPill: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    zIndex: 10,
+    gap: 6,
+    shadowColor: THEME.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  newPostsText: { color: 'white', fontWeight: '700', fontSize: 13 },
+  // Skeleton Styles
+  skeletonContainer: {
+    padding: 16,
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F3F5',
+  },
+  skeletonAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#F1F5F9',
+  },
+  skeletonContent: {
+    flex: 1,
+    marginLeft: 12,
+    gap: 8,
+  },
+  skeletonLineShort: {
+    width: '40%',
+    height: 14,
+    borderRadius: 4,
+    backgroundColor: '#F1F5F9',
+  },
+  skeletonLineLong: {
+    width: '100%',
+    height: 14,
+    borderRadius: 4,
+    backgroundColor: '#F1F5F9',
   },
 });
